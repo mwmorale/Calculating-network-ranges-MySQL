@@ -1,0 +1,45 @@
+//  Database query to copy URL hits and the score of the network that made the
+//  request into the url_tally table for ML training purposes.
+
+
+     $url_tally_update = '
+         INSERT url_tally (`url`, `cumulative_score`, `ct_lt_pt1`, 
+`ct_lt_pt3`, `ct_lt_pt5`, `ct_lt_pt7`, `ct_lt_pt9`, `ct_gte_pt9`, 
+`hits`, `last_hit`)
+         SELECT
+             `content`,
+             `score`,
+             IF(`score` < 0.1, 1, 0) AS `ct_lt_pt1`,
+             IF(`score` < 0.3 AND `score` >= 0.1, 1, 0) AS `ct_lt_pt3`,
+             IF(`score` < 0.5 AND `score` >= 0.3, 1, 0) AS `ct_lt_pt5`,
+             IF(`score` < 0.7 AND `score` >= 0.5, 1, 0) AS `ct_lt_pt7`,
+             IF(`score` < 0.9 AND `score` >= 0.7, 1, 0) AS `ct_lt_pt9`,
+             IF(`score` >= 0.9, 1, 0) AS `ct_gte_pt9`,
+             1 AS `hits`,
+             `log_date`
+         FROM (
+             SELECT
+                 `content`,
+                 substring_index(group_concat(`score` ORDER BY 
+`netrange_current_week`.`size` ASC separator "|"), "|", 1) AS `score`,
+                 `log_date`
+             FROM big_log
+             LEFT JOIN netrange_current_week ON big_log.`remote_ip_aton` 
+BETWEEN `netrange_current_week`.`range_start` AND 
+`netrange_current_week`.`range_end`
+             WHERE `row_id` BETWEEN ? AND ? AND `class` = "http" AND 
+`read_by` = "netrange_update"
+             GROUP BY `row_id`, `content`
+         ) tally_updates
+         ON DUPLICATE KEY UPDATE
+             `cumulative_score` = `cumulative_score` + 
+VALUES(`cumulative_score`),
+             `ct_lt_pt1` = `ct_lt_pt1` + VALUES(`ct_lt_pt1`),
+             `ct_lt_pt3` = `ct_lt_pt3` + VALUES(`ct_lt_pt3`),
+             `ct_lt_pt5` = `ct_lt_pt5` + VALUES(`ct_lt_pt5`),
+             `ct_lt_pt7` = `ct_lt_pt7` + VALUES(`ct_lt_pt7`),
+             `ct_lt_pt9` = `ct_lt_pt9` + VALUES(`ct_lt_pt9`),
+             `ct_gte_pt9` = `ct_gte_pt9` + VALUES(`ct_gte_pt9`),
+             `hits` = `hits` + VALUES(`hits`),
+             `last_hit` = greatest(`last_hit`, VALUES(`last_hit`))
+     ';
